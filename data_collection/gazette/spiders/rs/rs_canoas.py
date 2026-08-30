@@ -74,31 +74,66 @@ class UFMunicipioSpider(BaseGazetteSpider):
             )
         elif new_url in uri:
             # NEW URL - UNIQUE STEP
+            vector = {}
             fileshare = "https://sistemas.canoas.rs.gov.br/domc/api/edition-file/"
             date_pattern = "([0-9]{2}/[0-9]{2}/[0-9]{4})"
             edition_pattern = r"Edição.*\b(\d+)"
             download_pattern = r"setPage\((\d+)"
-            extra = False
-            editions = response.css(".table-bordered")
-            for edition in editions.xpath("//tbody/tr"):
-                publication_date = edition.re(date_pattern, edition)
-                publication_date = dt.datetime.strptime(
-                    "".join(publication_date), "%d/%m/%Y"
-                ).date()
-                edition_number = edition.re(edition_pattern, edition)
-                edition_number = "".join(edition_number)
-                if edition.re("Complementar", edition):
-                    extra = True
-                download = edition.re_first(download_pattern)
-                file_url = fileshare + download
 
-            yield Gazette(
-                date=publication_date,
-                edition_number=edition_number,
-                is_extra_edition=extra,
-                file_urls=[file_url],
-                power="executive",
-            )
+            # ALL PAGES
+            pages = response.xpath("//ul[@class='pagination']")
+            # EACH PAGE
+            for page in pages.xpath("li['@a href']"):
+                # NEXT PAGE
+                if page.css("a::attr(rel)"):
+                    pg_url = page.css("a::attr(href)").get()
+                    yield scrapy.Request(url=pg_url, callback=self.parse)
+                # ALL REGISTRIES IN EACH PAGE
+                editions = response.css(".table-bordered")
+                key = 0
+                extra_num = ""
+                endpoint = ""
+
+                # EACH REGISTRY IN PAGE
+                for edition in editions.xpath("//tbody/tr"):
+                    # UNIQUE EDITIONS
+                    extra = False
+                    edition_number = edition.re(edition_pattern, edition)
+                    edition_number = "".join(edition_number)
+
+                    # IS IT AN EXTRA EDITION?
+                    if edition.re(r"Complementar", edition):
+                        extra = True
+                        extra_regex = edition.re(r"\s\d\s", edition)
+                        if extra_num == extra_regex:
+                            continue
+                        extra_num = extra_regex
+                    publication_date = edition.re(date_pattern, edition)
+                    publication_date = dt.datetime.strptime(
+                        "".join(publication_date), "%d/%m/%Y"
+                    ).date()
+
+                    # DONT REPEAT DOWNLOAD
+                    download = edition.re_first(download_pattern)
+                    if endpoint == download:
+                        continue
+                    if extra is False:
+                        endpoint = download
+                    # DOWNLOAD URL
+                    file_url = fileshare + download
+                    key += 1
+
+                    # DICT WITH ALL VALID REGISTRIES
+                    vector[key] = {
+                        "date": publication_date,
+                        "edition_number": edition_number,
+                        "is_extra_edition": extra,
+                        "file_urls": [file_url],
+                        "power": "executive",
+                    }
+            # RETURN ONE REGISTRY AT A TIME
+            for idx in vector.items():
+                yield Gazette(idx[1])
 
     def parse_table_sections(self, response):
         # OLD URL - STEP 2: -> CLICK ON THE SECTION TABLE ROW
@@ -205,6 +240,6 @@ class UFMunicipioSpider(BaseGazetteSpider):
         yield Gazette(
             date=self.start_date,
             file_urls=[url_direta_pdf],
-            is_extra_edition=False,  # Ajuste se houver lógica para edições extra
+            is_extra_edition=False,
             power="executive",
         )
