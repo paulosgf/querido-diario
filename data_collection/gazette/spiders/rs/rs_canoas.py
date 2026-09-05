@@ -1,5 +1,6 @@
 import datetime as dt
 
+# import pdb
 import scrapy
 from scrapy.http import FormRequest
 
@@ -24,26 +25,33 @@ class UFMunicipioSpider(BaseGazetteSpider):
     allowed_domains = ["sistemas.canoas.rs.gov.br"]
     start_urls = ["https://sistemas.canoas.rs.gov.br/domc/pesquisar?"]
     start_date = dt.date(2012, 11, 5)
+    end_date = None
 
     def start_requests(self):
+        if self.end_date is None:
+            self.end_date = self.start_date
         for d in daily_sequence(self.start_date, self.end_date, "%Y-%m-%d"):
             day = dt.datetime.strptime(d, "%Y-%m-%d").date()
-            if day >= self.start_date and day <= dt.date(2018, 5, 29):
+            if day <= dt.date(2018, 5, 29):
                 yield scrapy.Request(url=old_url, callback=self.parse)
+            # BUG - Spyder always process all gazettes until today
             elif day >= dt.date(2018, 5, 30):
-                url = (
-                    new_url
-                    + self.start_date.strftime("%d/%m/%Y")
-                    + "&publication_final_date="
-                    + self.end_date.strftime("%d/%m/%Y")
-                )
-                yield scrapy.Request(url=url)
+                url = new_url + day.strftime("%d/%m/%Y")
+                if self.end_date != self.start_date:
+                    url = (
+                        url
+                        + "&publication_final_date="
+                        + self.end_date.strftime("%d/%m/%Y")
+                    )
+                # breakpoint()
+            yield scrapy.Request(url=url)
 
     def parse(self, response):
         # SELECT OLD OR NEW URL
         uri = response.url
         if old_url in uri:
             # OLD URL - STEP 1: HOME PAGE -> CLICK SEARCH
+            # TODO - Spyder needs to processs full interval between start and end dates
             view_state = response.css(
                 'input[name="javax.faces.ViewState"]::attr(value)'
             ).get()
